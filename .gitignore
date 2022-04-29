@@ -1,0 +1,7 @@
+/target
+
+#editor files
+*iml
+.idea
+.kdev4/
+nsdetect.kdev4
