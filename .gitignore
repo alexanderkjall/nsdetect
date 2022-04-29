@@ -5,3 +5,4 @@
 .idea
 .kdev4/
 nsdetect.kdev4
+*.kate-swp

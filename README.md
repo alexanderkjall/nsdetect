@@ -29,11 +29,15 @@ nsdetect  -h
 The input file should simply be a list of domains, one per line
 
 Once we have done sufficient recon on the target and have prepared the list of domains/subdomains, we can provide the
-list as an input to the tool in order to scan each domain in the list. The script shows the results in the real-time
-such that the domains highlighted with red colour are vulnerable domains. We can use *-i* or *--input* option to provide the
+list as an input to the tool in order to scan each domain in the list. We can use *-i* or *--input* option to provide the
 input file as shown below:
 ```
 nsdetect -i ~/Desktop/temp.csv
+```
+
+Or use -d to specify just one domain.
+```
+nsdetect -d example.com
 ```
 
 For the takeover of the vulnerable domains, we can use [**NSBrute](https://github.com/shivsahni/NSBrute)**, 
