@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::io::BufRead;
 use trust_dns_resolver::config::*;
 use trust_dns_resolver::error::ResolveErrorKind;
 use trust_dns_resolver::proto::op::ResponseCode;
@@ -70,19 +71,26 @@ fn main() {
         eprintln!("the --input_file option and the --domain option are mutually exclusive");
         std::process::exit(1);
     }
+
+    let mut to_check: Vec<String> = vec![];
+
     if args.input_file.is_none() && args.domain.is_none() {
-        eprintln!("one of the --input_file and --domain options must be set");
-        std::process::exit(1);
+        for input in std::io::stdin().lock().lines() {
+            to_check.push(input.unwrap().trim().to_string());
+        }
     }
 
     if args.input_file.is_some() {
         let list = std::fs::read_to_string(&args.input_file.unwrap()).unwrap();
 
         for l in list.split('\n') {
-            println!("{}: {}", l.trim(), is_vulnerable(l.trim()).unwrap());
+            to_check.push(l.trim().to_string());
         }
     } else if args.domain.is_some() {
-        let d = &args.domain.unwrap();
-        println!("{}: {}", d, is_vulnerable(d).unwrap());
+        to_check.push(args.domain.unwrap());
+    }
+
+    for l in to_check {
+        println!("{}: {}", &l, is_vulnerable(&l).unwrap());
     }
 }
