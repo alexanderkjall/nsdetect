@@ -32,12 +32,29 @@ Once we have done sufficient recon on the target and have prepared the list of d
 list as an input to the tool in order to scan each domain in the list. We can use *-i* or *--input* option to provide the
 input file as shown below:
 ```
-nsdetect -i ~/Desktop/temp.csv
+$ nsdetect -i ~/Desktop/temp.csv
+example.com: false
 ```
 
 Or use -d to specify just one domain.
 ```
-nsdetect -d example.com
+$ nsdetect -d example.com
+example.com: false
+```
+
+Or pipe the domains to nsdetect.
+```
+$ echo "example.org
+example.com" | nsdetect
+example.org: false
+example.com: false
+```
+
+Use the --async option to do the lookups asynchronously.
+```
+cat /tmp/domains | nsdetect -a
+example.org: false
+example.com: false
 ```
 
 For the takeover of the vulnerable domains, we can use [**NSBrute](https://github.com/shivsahni/NSBrute)**, 

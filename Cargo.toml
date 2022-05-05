@@ -5,8 +5,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Alexander Kjäll <alexander.kjall@gmail.com>"]
 license = "GPL-3.0-only"
+repository = "https://github.com/alexanderkjall/nsdetect"
 
 [dependencies]
 clap = { version = "3.1.12", features = ["derive"] }
 trust-dns-resolver = "0.21.2"
 anyhow = "1.0.57"
+tokio = "1.18.0"
+futures = "0.3.21"

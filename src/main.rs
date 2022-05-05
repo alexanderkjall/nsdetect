@@ -1,15 +1,17 @@
 use anyhow::Result;
 use clap::Parser;
 use std::io::BufRead;
+use tokio::runtime::Runtime;
 use trust_dns_resolver::config::*;
+use trust_dns_resolver::error::ResolveError;
 use trust_dns_resolver::error::ResolveErrorKind;
+use trust_dns_resolver::lookup_ip::LookupIp;
 use trust_dns_resolver::proto::op::ResponseCode;
 use trust_dns_resolver::Resolver;
+use trust_dns_resolver::TokioAsyncResolver;
 
-fn is_vulnerable(domain_name: &str) -> Result<bool> {
-    let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
-
-    Ok(match resolver.lookup_ip(domain_name) {
+fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> bool {
+    match lookup_result {
         Ok(_) => false,
         Err(err) => match err.kind() {
             ResolveErrorKind::Message(_) => false,
@@ -49,10 +51,12 @@ fn is_vulnerable(domain_name: &str) -> Result<bool> {
             ResolveErrorKind::Timeout => false,
             _ => false,
         },
-    })
+    }
 }
 
-/// Tool to detect if a domain is vulnerable to domain server takeover
+/// Tool to detect if a domain is vulnerable to domain server takeover.
+/// If neither of -d or -i is specified, the list of domains will be read
+/// from stdin.
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -62,6 +66,44 @@ struct Args {
     /// Domain to do the lookup for
     #[clap(short, long)]
     domain: Option<String>,
+    /// If the lookups should be perfomed asynchronously or not
+    #[clap(short, long)]
+    r#async: bool,
+}
+
+fn check_async(to_check: &[String]) {
+    let io_loop = Runtime::new().unwrap();
+
+    let resolver = io_loop
+        .block_on(async {
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+        })
+        .expect("failed to connect resolver");
+
+    let futures: Vec<_> = to_check.iter().map(|l| resolver.lookup_ip(l)).collect();
+
+    // do these futures concurrently and return them
+    let _ = io_loop
+        .block_on(futures::future::join_all(futures))
+        .into_iter()
+        .map(|res| is_vulnerable(&res))
+        .zip(to_check.iter())
+        .map(|(is_vulnerable, domain)| {
+            println!("{} : {}", domain, is_vulnerable);
+        })
+        .collect::<()>();
+}
+
+fn check(to_check: &[String]) {
+    let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
+
+    let _ = to_check
+        .iter()
+        .map(|l| {
+            let is_vulnerable = is_vulnerable(&resolver.lookup_ip(l));
+            println!("{} : {}", l, is_vulnerable);
+        })
+        .collect::<()>();
 }
 
 fn main() {
@@ -90,7 +132,9 @@ fn main() {
         to_check.push(args.domain.unwrap());
     }
 
-    for l in to_check {
-        println!("{}: {}", &l, is_vulnerable(&l).unwrap());
+    if args.r#async {
+        check_async(&to_check);
+    } else {
+        check(&to_check);
     }
 }
