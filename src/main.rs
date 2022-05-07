@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::io::Write;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
@@ -12,13 +14,20 @@ use trust_dns_resolver::proto::op::ResponseCode;
 use trust_dns_resolver::Resolver;
 use trust_dns_resolver::TokioAsyncResolver;
 
-fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> bool {
+#[derive(PartialEq, Serialize)]
+enum LookupResult {
+    Safe,
+    MaybeVulnerable,
+    LookupError,
+}
+
+fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> LookupResult {
     match lookup_result {
-        Ok(_) => false,
+        Ok(_) => LookupResult::Safe,
         Err(err) => match err.kind() {
-            ResolveErrorKind::Message(_) => false,
-            ResolveErrorKind::Msg(_) => false,
-            ResolveErrorKind::NoConnections => false,
+            ResolveErrorKind::Message(_) => LookupResult::Safe,
+            ResolveErrorKind::Msg(_) => LookupResult::Safe,
+            ResolveErrorKind::NoConnections => LookupResult::Safe,
             ResolveErrorKind::NoRecordsFound {
                 query: _,
                 soa: _,
@@ -26,32 +35,32 @@ fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> bool {
                 response_code,
                 trusted: _,
             } => match response_code {
-                ResponseCode::NoError => false,
-                ResponseCode::FormErr => false,
-                ResponseCode::ServFail => true,
-                ResponseCode::NXDomain => false,
-                ResponseCode::NotImp => false,
-                ResponseCode::Refused => false,
-                ResponseCode::YXDomain => false,
-                ResponseCode::YXRRSet => false,
-                ResponseCode::NXRRSet => false,
-                ResponseCode::NotAuth => false,
-                ResponseCode::NotZone => false,
-                ResponseCode::BADVERS => false,
-                ResponseCode::BADSIG => false,
-                ResponseCode::BADKEY => false,
-                ResponseCode::BADTIME => false,
-                ResponseCode::BADMODE => false,
-                ResponseCode::BADNAME => false,
-                ResponseCode::BADALG => false,
-                ResponseCode::BADTRUNC => false,
-                ResponseCode::BADCOOKIE => false,
-                ResponseCode::Unknown(_number) => false,
+                ResponseCode::NoError => LookupResult::Safe,
+                ResponseCode::FormErr => LookupResult::Safe,
+                ResponseCode::ServFail => LookupResult::MaybeVulnerable,
+                ResponseCode::NXDomain => LookupResult::Safe,
+                ResponseCode::NotImp => LookupResult::Safe,
+                ResponseCode::Refused => LookupResult::Safe,
+                ResponseCode::YXDomain => LookupResult::Safe,
+                ResponseCode::YXRRSet => LookupResult::Safe,
+                ResponseCode::NXRRSet => LookupResult::Safe,
+                ResponseCode::NotAuth => LookupResult::Safe,
+                ResponseCode::NotZone => LookupResult::Safe,
+                ResponseCode::BADVERS => LookupResult::Safe,
+                ResponseCode::BADSIG => LookupResult::Safe,
+                ResponseCode::BADKEY => LookupResult::Safe,
+                ResponseCode::BADTIME => LookupResult::Safe,
+                ResponseCode::BADMODE => LookupResult::Safe,
+                ResponseCode::BADNAME => LookupResult::Safe,
+                ResponseCode::BADALG => LookupResult::Safe,
+                ResponseCode::BADTRUNC => LookupResult::Safe,
+                ResponseCode::BADCOOKIE => LookupResult::Safe,
+                ResponseCode::Unknown(_number) => LookupResult::Safe,
             },
-            ResolveErrorKind::Io(_) => false,
-            ResolveErrorKind::Proto(_) => false,
-            ResolveErrorKind::Timeout => false,
-            _ => false,
+            ResolveErrorKind::Io(_) => LookupResult::Safe,
+            ResolveErrorKind::Proto(_) => LookupResult::LookupError,
+            ResolveErrorKind::Timeout => LookupResult::Safe,
+            _ => LookupResult::Safe,
         },
     }
 }
@@ -74,9 +83,18 @@ struct Args {
     /// If the output should be printed in color or not
     #[clap(short, long)]
     color: bool,
+    /// Combined option json_input and json_output, if this one is set, then those are assumed to be set also
+    #[clap(short, long)]
+    json: bool,
+    /// If the input should be parsed as json
+    #[clap(long)]
+    json_input: bool,
+    /// If the output should be printed as json, in case both this value and --color is set at the same time, this one takes precedence
+    #[clap(long)]
+    json_output: bool,
 }
 
-fn check_async(to_check: &[String], color: bool) -> Result<()> {
+fn check_async(to_check: &[String], color: bool, json: bool) -> Result<()> {
     let io_loop = Runtime::new().unwrap();
 
     let resolver = io_loop
@@ -88,35 +106,51 @@ fn check_async(to_check: &[String], color: bool) -> Result<()> {
     let futures: Vec<_> = to_check.iter().map(|l| resolver.lookup_ip(l)).collect();
 
     // do these futures concurrently and return them
-    io_loop
-        .block_on(futures::future::join_all(futures))
-        .into_iter()
-        .map(|res| is_vulnerable(&res))
-        .zip(to_check.iter())
-        .map(|(is_vulnerable, domain)| {
-            print(domain, is_vulnerable, color)
-        })
-        .collect::<Result<()>>()
+    let results = to_check
+        .iter()
+        .zip(
+            io_loop
+                .block_on(futures::future::join_all(futures))
+                .into_iter()
+                .map(|res| is_vulnerable(&res)),
+        )
+        .collect::<HashMap<&String, LookupResult>>();
+
+    print_results(results, color, json)
 }
 
-fn check(to_check: &[String], color: bool) -> Result<()> {
+fn check(to_check: &[String], color: bool, json: bool) -> Result<()> {
     let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
 
-    to_check
+    let results = to_check
         .iter()
         .map(|l| {
             let is_vulnerable = is_vulnerable(&resolver.lookup_ip(l));
-            print(l, is_vulnerable, color)
+            (l, is_vulnerable)
         })
-        .collect::<Result<()>>()
+        .collect::<HashMap<&String, LookupResult>>();
+
+    print_results(results, color, json)
 }
 
-fn print(domain: &str, is_vulnerable: bool, color: bool) -> Result<()> {
+fn print_results(results: HashMap<&String, LookupResult>, color: bool, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        for (domain, is_vulnerable) in results.iter() {
+            print(domain, is_vulnerable, color)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn print(domain: &str, is_vulnerable: &LookupResult, color: bool) -> Result<()> {
     if color {
         let mut stdout = StandardStream::stdout(ColorChoice::Always);
         write!(&mut stdout, "{} : ", domain)?;
 
-        if is_vulnerable {
+        if *is_vulnerable == LookupResult::MaybeVulnerable {
             stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
             writeln!(&mut stdout, "maybe vulnerable")?;
         } else {
@@ -127,7 +161,7 @@ fn print(domain: &str, is_vulnerable: bool, color: bool) -> Result<()> {
     } else {
         print!("{} : ", domain);
 
-        if is_vulnerable {
+        if *is_vulnerable == LookupResult::MaybeVulnerable {
             println!("maybe vulnerable");
         } else {
             println!("safe");
@@ -148,8 +182,13 @@ fn main() {
     let mut to_check: Vec<String> = vec![];
 
     if args.input_file.is_none() && args.domain.is_none() {
-        for input in std::io::stdin().lock().lines() {
-            to_check.push(input.unwrap().trim().to_string());
+        if args.json || args.json_input {
+            let datas: Vec<String> = serde_json::from_reader(std::io::stdin()).unwrap();
+            to_check.extend(datas);
+        } else {
+            for input in std::io::stdin().lock().lines() {
+                to_check.push(input.unwrap().trim().to_string());
+            }
         }
     }
 
@@ -164,8 +203,8 @@ fn main() {
     }
 
     if args.r#async {
-        check_async(&to_check, args.color).unwrap();
+        check_async(&to_check, args.color, args.json || args.json_output).unwrap();
     } else {
-        check(&to_check, args.color).unwrap();
+        check(&to_check, args.color, args.json || args.json_output).unwrap();
     }
 }
