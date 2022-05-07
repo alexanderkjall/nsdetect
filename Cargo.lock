@@ -386,6 +386,7 @@ dependencies = [
  "anyhow",
  "clap",
  "futures",
+ "termcolor",
  "tokio",
  "trust-dns-resolver",
 ]

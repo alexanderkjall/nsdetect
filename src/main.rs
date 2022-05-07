@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use std::io::BufRead;
+use std::io::Write;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use tokio::runtime::Runtime;
 use trust_dns_resolver::config::*;
 use trust_dns_resolver::error::ResolveError;
@@ -69,9 +71,12 @@ struct Args {
     /// If the lookups should be perfomed asynchronously or not
     #[clap(short, long)]
     r#async: bool,
+    /// If the output should be printed in color or not
+    #[clap(short, long)]
+    color: bool,
 }
 
-fn check_async(to_check: &[String]) {
+fn check_async(to_check: &[String], color: bool) -> Result<()> {
     let io_loop = Runtime::new().unwrap();
 
     let resolver = io_loop
@@ -83,27 +88,53 @@ fn check_async(to_check: &[String]) {
     let futures: Vec<_> = to_check.iter().map(|l| resolver.lookup_ip(l)).collect();
 
     // do these futures concurrently and return them
-    let _ = io_loop
+    io_loop
         .block_on(futures::future::join_all(futures))
         .into_iter()
         .map(|res| is_vulnerable(&res))
         .zip(to_check.iter())
         .map(|(is_vulnerable, domain)| {
-            println!("{} : {}", domain, is_vulnerable);
+            print(domain, is_vulnerable, color)
         })
-        .collect::<()>();
+        .collect::<Result<()>>()
 }
 
-fn check(to_check: &[String]) {
+fn check(to_check: &[String], color: bool) -> Result<()> {
     let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
 
-    let _ = to_check
+    to_check
         .iter()
         .map(|l| {
             let is_vulnerable = is_vulnerable(&resolver.lookup_ip(l));
-            println!("{} : {}", l, is_vulnerable);
+            print(l, is_vulnerable, color)
         })
-        .collect::<()>();
+        .collect::<Result<()>>()
+}
+
+fn print(domain: &str, is_vulnerable: bool, color: bool) -> Result<()> {
+    if color {
+        let mut stdout = StandardStream::stdout(ColorChoice::Always);
+        write!(&mut stdout, "{} : ", domain)?;
+
+        if is_vulnerable {
+            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
+            writeln!(&mut stdout, "maybe vulnerable")?;
+        } else {
+            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+            writeln!(&mut stdout, "safe")?;
+        }
+        stdout.reset()?;
+    } else {
+        print!("{} : ", domain);
+
+        if is_vulnerable {
+            println!("maybe vulnerable");
+        } else {
+            println!("safe");
+        }
+    }
+
+    Ok(())
 }
 
 fn main() {
@@ -133,8 +164,8 @@ fn main() {
     }
 
     if args.r#async {
-        check_async(&to_check);
+        check_async(&to_check, args.color).unwrap();
     } else {
-        check(&to_check);
+        check(&to_check, args.color).unwrap();
     }
 }
