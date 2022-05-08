@@ -1,11 +1,13 @@
 [package]
 name = "nsdetect"
-description = "Small utility to detect AWS NS takeover"
-version = "0.1.0"
+description = "Small utility to detect dangling NS pointes that could be used for AWS NS takeover"
+version = "0.2.0"
 edition = "2021"
 authors = ["Alexander Kjäll <alexander.kjall@gmail.com>"]
 license = "GPL-3.0-only"
 repository = "https://github.com/alexanderkjall/nsdetect"
+keywords = ["DNS"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 clap = { version = "3.1.12", features = ["derive"] }
