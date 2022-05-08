@@ -2,8 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::io::BufRead;
-use std::io::Write;
+use std::fmt::Display;
+use std::io::{BufRead, Write};
+use std::net::IpAddr;
+use std::str::FromStr;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use tokio::runtime::Runtime;
 use trust_dns_resolver::config::*;
@@ -19,6 +21,16 @@ enum LookupResult {
     Safe,
     MaybeVulnerable,
     LookupError,
+}
+
+impl Display for LookupResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            LookupResult::Safe => write!(f, "Safe"),
+            LookupResult::MaybeVulnerable => write!(f, "MaybeVulnerable"),
+            LookupResult::LookupError => write!(f, "LookupError"),
+        }
+    }
 }
 
 fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> LookupResult {
@@ -92,14 +104,30 @@ struct Args {
     /// If the output should be printed as json, in case both this value and --color is set at the same time, this one takes precedence
     #[clap(long)]
     json_output: bool,
+    /// The ip address of the name server to use, defaults to google's servers
+    #[clap(short, long)]
+    name_server: Option<String>,
 }
 
-fn check_async(to_check: &[String], color: bool, json: bool) -> Result<()> {
+fn check_async(to_check: &[String], color: bool, json: bool, ns: Option<String>) -> Result<()> {
     let io_loop = Runtime::new().unwrap();
+
+    let ns = ns.map(|ns| IpAddr::from_str(&ns).unwrap());
 
     let resolver = io_loop
         .block_on(async {
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+            if let Some(ns) = ns {
+                TokioAsyncResolver::tokio(
+                    ResolverConfig::from_parts(
+                        None,
+                        vec![],
+                        NameServerConfigGroup::from_ips_clear(&[ns], 53, true),
+                    ),
+                    ResolverOpts::default(),
+                )
+            } else {
+                TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+            }
         })
         .expect("failed to connect resolver");
 
@@ -119,8 +147,22 @@ fn check_async(to_check: &[String], color: bool, json: bool) -> Result<()> {
     print_results(results, color, json)
 }
 
-fn check(to_check: &[String], color: bool, json: bool) -> Result<()> {
-    let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
+fn check(to_check: &[String], color: bool, json: bool, ns: Option<String>) -> Result<()> {
+    let ns = ns.map(|ns| IpAddr::from_str(&ns).unwrap());
+
+    let resolver = if let Some(ns) = ns {
+        Resolver::new(
+            ResolverConfig::from_parts(
+                None,
+                vec![],
+                NameServerConfigGroup::from_ips_clear(&[ns], 53, true),
+            ),
+            ResolverOpts::default(),
+        )
+        .unwrap()
+    } else {
+        Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap()
+    };
 
     let results = to_check
         .iter()
@@ -150,22 +192,19 @@ fn print(domain: &str, is_vulnerable: &LookupResult, color: bool) -> Result<()> 
         let mut stdout = StandardStream::stdout(ColorChoice::Always);
         write!(&mut stdout, "{} : ", domain)?;
 
-        if *is_vulnerable == LookupResult::MaybeVulnerable {
-            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
-            writeln!(&mut stdout, "maybe vulnerable")?;
-        } else {
-            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
-            writeln!(&mut stdout, "safe")?;
-        }
+        match *is_vulnerable {
+            LookupResult::MaybeVulnerable => {
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?
+            }
+            LookupResult::Safe => stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?,
+            LookupResult::LookupError => {
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)))?
+            }
+        };
+        writeln!(&mut stdout, "{}", *is_vulnerable)?;
         stdout.reset()?;
     } else {
-        print!("{} : ", domain);
-
-        if *is_vulnerable == LookupResult::MaybeVulnerable {
-            println!("maybe vulnerable");
-        } else {
-            println!("safe");
-        }
+        println!("{} : {}", domain, *is_vulnerable);
     }
 
     Ok(())
@@ -203,8 +242,20 @@ fn main() {
     }
 
     if args.r#async {
-        check_async(&to_check, args.color, args.json || args.json_output).unwrap();
+        check_async(
+            &to_check,
+            args.color,
+            args.json || args.json_output,
+            args.name_server,
+        )
+        .unwrap();
     } else {
-        check(&to_check, args.color, args.json || args.json_output).unwrap();
+        check(
+            &to_check,
+            args.color,
+            args.json || args.json_output,
+            args.name_server,
+        )
+        .unwrap();
     }
 }
