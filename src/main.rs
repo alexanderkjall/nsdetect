@@ -37,16 +37,12 @@ fn is_vulnerable(lookup_result: &Result<LookupIp, ResolveError>) -> LookupResult
     match lookup_result {
         Ok(_) => LookupResult::Safe,
         Err(err) => match err.kind() {
-            ResolveErrorKind::Message(_) => LookupResult::Safe,
-            ResolveErrorKind::Msg(_) => LookupResult::Safe,
-            ResolveErrorKind::NoConnections => LookupResult::Safe,
-            ResolveErrorKind::NoRecordsFound { response_code, .. } => match response_code {
-                ResponseCode::ServFail => LookupResult::MaybeVulnerable,
-                _ => LookupResult::Safe,
-            },
+            ResolveErrorKind::NoRecordsFound {
+                response_code: ResponseCode::ServFail,
+                ..
+            } => LookupResult::MaybeVulnerable,
             ResolveErrorKind::Io(_) => LookupResult::LookupError,
             ResolveErrorKind::Proto(_) => LookupResult::LookupError,
-            ResolveErrorKind::Timeout => LookupResult::Safe,
             _ => LookupResult::Safe,
         },
     }
